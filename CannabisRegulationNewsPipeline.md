@@ -1,219 +1,265 @@
-# Commission LWC — Post-Install Setup Guide
+# Cannabis Regulation News Workflow Documentation
 
-## Package Information
+## Overview
 
-| | |
-|---|---|
-| **Package Name** | Commission LWC |
-| **Package ID** | 0HoPU00000004Ev0AI |
-| **Latest Version** | 1.1.0-2 |
-| **Version ID** | 04tPU000002KQzhYAG |
-| **Installation URL** | https://login.salesforce.com/packaging/installPackage.apexp?p0=04tPU000002KQzhYAG |
+This workflow automates the process of discovering, filtering, and publishing cannabis regulation news stories. It consists of two main parts:
 
-To install via Salesforce CLI:
-```bash
-sf package install --package 04tPU000002KQzhYAG --target-org <your-org-alias> --wait 10
-```
-
-### Version History
-
-| Version | Version ID | Status | What's included |
-|---------|------------|--------|-----------------|
-| 1.1.0-2 | 04tPU000002KQzhYAG | Released | Bulk commission run, user plan assignment UI, auto tab visibility, system user fix |
-| 1.0.0-4 | 04tPU000002JcEvYAK | Released | Initial release — Commission entry, plan field config, calculation engine, tiers |
+1. **Daily News Discovery & Filtering** – Runs on schedule to find and evaluate news stories  
+2. **Approval & Publishing** – Triggered by email replies to publish approved stories  
 
 ---
 
-After installing the **Commission LWC** package, complete the following steps to make the system fully operational in your org.
+# Part 1: Daily News Discovery & Filtering
+
+## Trigger
+- **Schedule Trigger** – Runs daily to fetch new cannabis regulation news
 
 ---
 
-## Step 1 — Assign the Permission Set
+## Step 1: Fetch News
 
-All users who will use this system (admins, managers, anyone entering commission data) need the **Commission Plan Admin** permission set.
-
-1. Go to **Setup** → search **Permission Sets** → click it
-2. Click **Commission Plan Admin**
-3. Click **Manage Assignments** → **Add Assignments**
-4. Select the users who need access → click **Assign**
-
-> This grants access to the `Representative_Commission__c` and `Commission_Plan_Field_Config__c` objects and the required Apex classes.
-
----
-
-## Step 2 — Make the Commission Management App Visible
-
-The package installs a custom app called **Commission Management**. If it is not appearing in the App Launcher, assign it to your profile:
-
-1. Go to **Setup** → search **App Manager** → click it
-2. Find **Commission Management** in the list → click the dropdown arrow on the right → **Edit**
-3. Click **User Profiles** in the left menu
-4. Move your profile (e.g. System Administrator) to the **Selected Profiles** list
-5. Click **Save**
-
-After saving, open the **App Launcher** (9-dot grid, top left), search for **Commission Management**, and you should see these tabs:
-- **Commission Entry** — for entering rep commission data one record at a time
-- **Run Commissions** — for bulk-creating commission records for an entire team in one click
-- **Commission Plan Field Config** — for admin field configuration
+### Fetch Cannabis News from GNews
+- Fetches latest cannabis regulation news from GNews API  
+- Search query: `"cannabis regulation"`  
+- Returns:
+  - title
+  - description
+  - url
+  - source
+  - publishedAt  
 
 ---
 
-## Step 3 — Add Commission Plan Field to the User Page Layout
+## Step 2: Process Articles
 
-The package adds a **Commission Plan** field to the User object. This field stores which commission plan each rep is assigned to. It must be added to the User page layout manually so admins can set it when editing a user record.
+### Split Articles
+- Splits the news feed into individual article items for processing  
 
-1. Go to **Setup** → search **Object Manager** → click it
-2. Click **User** → click **Page Layouts**
-3. Click the layout in use (typically **"User Layout"**)
-4. In the **Fields** palette at the top, find **Commission Plan**
-5. Drag it onto the layout in a visible section (e.g. under "Additional Information")
-6. Click **Save**
+### Prepare Article Data
+Transforms each article into standardized format:
 
-> Once added, go to **Setup → Users → Users**, open any user, and you will see the **Commission Plan** field. Enter the exact `DeveloperName` of their plan (e.g. `Brokered_CRR_Comp`). This is what the system uses to assign records to the correct plan.
-
-> To find valid plan DeveloperNames, run this query in Developer Console → Query Editor:
-> ```sql
-> SELECT Label, DeveloperName FROM RC_Commission_Plan__mdt
-> ```
+- `url` → Article URL  
+- `title` → Article headline  
+- `source` → News source name  
+- `publishDate` → Publication date  
+- `summary` → Article description/snippet  
+- `dateFound` → Current date (when discovered)  
+- `status` → Initial status: **"New"**
 
 ---
 
-## Step 5 — Seed the Default Field Configurations
+## Step 3: Duplicate Detection
 
-The package includes pre-configured field selections for all 6 commission plans. Run the following code once in **Anonymous Apex** to apply the defaults.
+### Get Existing Stories
+- Fetches all existing stories from Google Sheets tracker  
+- Sheet: **"Story Tracker"**
 
-1. Go to **Setup** → search **Anonymous Apex** (or Developer Console → Debug → Open Execute Anonymous Window)
-2. Paste the following code and click **Execute**:
+### Check for Duplicates
+- Compares new articles against existing ones by URL  
+- Identifies truly new stories  
 
-```apex
-new CommissionFieldConfigInstallHandler().onInstall(null);
-```
-
-This will create the default field configuration for all plans:
-
-| Plan | Fields Configured |
-|------|-------------------|
-| `Cardiff_PM_Comp` | Eligible Units, Funded Units, Cardiff Margin %, Cardiff Margin $, Brokered Margin %, Brokered Margin $, Termed Deal %, Termed Deal $, Adjustment, + calc fields |
-| `Brokered_PM_Comp` | Base Commission, Eligible Units, Funded Units, Termed Deal %, Termed Deal $, Adjustment, + calc fields |
-| `Brokered_CRR_Comp` | Eligible Units, Funded Units, Team Margin %, Team Margin $, 60-Day Termed %, 60-Day Termed $, Adjustment, + calc fields |
-| `Assistant_Renewals_Director_Comp` | Eligible Units, Funded Units, Brokered Margin %, Brokered Margin $, Team Closing Ratio, Adjustment, + calc fields |
-| `CRF_CRR_Comp` | Eligible Units, Funded Units, Team Margin %, Team Margin $, Adjustment, + calc fields |
-| `Proposed_Comp` | $50K Funded, $50K+ Funded, Approve to Fund Ratio, Base Commission, + calc fields |
-
-> **Safe to re-run:** If you run this more than once, it will not overwrite any existing configuration. It only seeds plans that have no configuration yet.
-
-> **Customization:** You can change field selections at any time via the **Commission Plan Field Config** tab.
+### Keep Only New Stories
+- Filters out duplicates  
+- Only processes new stories  
 
 ---
 
-## Step 6 — Set Up the Record Detail Page
+## Step 4: Log New Stories
 
-The package includes a custom Lightning Record Page called **Representative Commission Record Page**. After installation it exists in your org but is not yet active — you need to assign it as the default page for `Representative_Commission__c` records.
+### Log All Stories
+Adds new stories to Google Sheets:
 
-### Option A — Via Lightning App Builder (Recommended)
-
-1. Go to **Setup** → search **Lightning App Builder** → click it
-2. Find **Representative Commission Record Page** in the list → click **Edit**
-3. Click **Activation** button (top right corner)
-4. Click the **Org Default** tab
-5. Click **Assign as Org Default**
-6. Click **Save** → click **Finish**
-
-### Option B — From a Record Directly
-
-1. Navigate to the **Representative Commissions** tab and open any record
-   *(If no records exist yet, create a test one from the Commission Entry tab first)*
-2. Click the **gear icon** (⚙) at the top right of the page → **Edit Page**
-3. In Lightning App Builder, you will see the current page layout
-4. Click **Activation** (top right)
-5. Click the **Org Default** tab → **Assign as Org Default**
-6. Click **Save** → **Finish**
-
-> After completing either option, every Representative Commission record will show the custom layout — only the data entry fields for the active plan, plus all calculated results below.
-
-> **If the page still shows the standard layout after activation:** Go to Setup → Lightning App Builder → find **Representative Commission Record Page** → verify it contains the **repCommissionRecord** component in the main region. If it is missing, drag it from the Custom Components panel on the left onto the canvas, then Save and Activate again.
+| Field | Column |
+|------|--------|
+| url | URL |
+| title | Title |
+| source | Source |
+| publishDate | PublishDate |
+| summary | Summary |
+| dateFound | DateFound |
+| status | Status |
 
 ---
 
-## Step 7 — Verify Everything Works
+## Step 5: AI Relevance Evaluation
 
-1. Open the **Commission Management** app from the App Launcher
-2. Click the **Commission Plan Field Config** tab
-   - Select a plan from the dropdown
-   - You should see checkboxes for data entry fields (defaults already selected from Step 5)
-3. Click the **Commission Entry** tab
-   - Select a rep, a month, and a plan
-   - Click Next — only the fields configured for that plan should appear
-   - Enter values and click Submit
-   - Open the created record — calculations should be filled in automatically
-4. Click the **Run Commissions** tab
-   - Select a plan — you should see the list of reps assigned to it
-   - Select a month and click **Run for Month**
-   - Records are created for all reps; anyone who already has one for that month is skipped
+### Evaluate Relevance
+Uses OpenAI to evaluate if each story is relevant.
 
----
+**Input:**
+- Title  
+- Summary  
+- Source  
 
-## Troubleshooting
+**Output:**
+- `Candidate` or `Ignored`
+- Reasoning  
 
-| Issue | Cause | Fix |
-|-------|-------|-----|
-| Commission Management app not visible | App not assigned to profile | Complete Step 2 |
-| "Insufficient Privileges" error | Permission set not assigned | Complete Step 1 |
-| Commission Plan field not visible on User record | Field not added to User page layout | Complete Step 3 |
-| Run Commissions tab shows no reps after selecting a plan | Commission Plan field not set on user records | Complete Step 3, then assign plans to users |
-| No fields shown in Commission Entry after selecting a plan | Field config not seeded | Complete Step 5 |
-| Commission Entry shows all fields instead of plan-specific ones | Record Page not set as Org Default | Complete Step 6 |
-| Calculations are not populating | Record Page not set as Org Default | Complete Step 6 |
-| No plans in the dropdown | RC_Commission_Plan__mdt records missing | Contact your package administrator |
+### OpenAI Configuration
+- Model: `gpt-4o-mini`
+
+### Structured Output
+- `status`
+- `reasoning`
 
 ---
 
-## Uninstalling the Package
+## Step 6: Update Tracker
 
-If you want to remove the package from your org, follow these steps in order.
+### Update Status
+- Matches by **URL**
+- Updates **Status column**
 
-> **Warning:** Uninstalling the package will permanently delete all `Representative_Commission__c` records and all `Commission_Plan_Field_Config__c` records. Export your data first if you need to keep it.
+Values:
+- `Candidate`
+- `Ignored`
 
-### Before You Uninstall
-
-**1. Export your data (optional but recommended)**
-
-If you want to keep a copy of your commission records:
-1. Go to **Setup** → search **Data Export** → click it
-2. Select `Representative_Commission__c` and `Commission_Plan_Field_Config__c`
-3. Export and download the CSV files
-
-**2. Deactivate the Record Page**
-
-1. Open any **Representative Commission** record
-2. Click the **gear icon** → **Edit Page**
-3. Click **Activation** → **Org Default** tab → **Remove as Org Default**
-4. Click **Save** → **Finish**
+### Preserve Data
+Ensures all fields remain intact:
+- url, title, source, publishDate, summary, status, reasoning
 
 ---
 
-### Uninstall the Package
+## Step 7: Send Summary Email
 
-1. Go to **Setup** → search **Installed Packages** → click it
-2. Find **Commission LWC** in the list
-3. Click **Uninstall**
-4. Salesforce will show a list of everything that will be removed — review it
-5. Check the box **"Yes, I want to uninstall..."** at the bottom
-6. Click **Uninstall**
+### Filter Candidates
+- Only `Candidate` stories proceed  
 
-The uninstall runs in the background. You will receive an email when it is complete. It typically takes a few minutes.
+### Aggregate
+- Combine all candidates into one email  
 
-**What gets removed automatically:**
-- All `Representative_Commission__c` records and the object itself
-- All `Commission_Plan_Field_Config__c` records and the object itself
-- All `RC_Commission_Plan__mdt` and `RC_Commission_Tier__mdt` metadata types and their records
-- All Apex classes (`CommissionCalculationService`, `CommissionEntryController`, `CommissionPlanAdminController`, etc.)
-- All Lightning Web Components (`commissionEntry`, `commissionRun`, `commissionPlanAdmin`, `repCommissionRecord`)
-- The `Commission Management` custom app and its tabs
-- The `Commission Plan Admin` permission set
+### Email Content
+- Title  
+- Source  
+- Summary  
+- URL  
+- AI reasoning  
 
 ---
 
-## Support
+# Part 2: Approval & Publishing Workflow
 
-For configuration changes or issues, contact your Salesforce administrator or the package provider.
+## Trigger
+
+### Gmail Trigger
+- Watches label: **cannabis-approvals**
+
+### Setup
+- Create Gmail label: `cannabis-approvals`
+- Create filter:
+  - Subject: *Cannabis Regulation News - Candidate Stories for Review*
+  - Apply label
+
+---
+
+## Step 1: Extract Approval Data
+
+Extract from email:
+- `storyUrl`
+- `approvalDecision`
+- `reviewerNotes`
+
+---
+
+## Step 2: Find Story in Tracker
+
+- Fetch all stories  
+- Match by URL  
+
+---
+
+## Step 3: Update Status
+
+- Update status → **Approved**
+
+---
+
+## Step 4: Prepare for WordPress
+
+Prepare:
+- title  
+- source  
+- summary  
+- url  
+- reviewerNotes  
+
+---
+
+## Step 5: Generate WordPress Draft
+
+### AI Draft Generation
+- Model: `gpt-4o-mini`
+
+### Input:
+- Title  
+- Source  
+- Summary  
+- URL  
+- Notes  
+
+### Output:
+- Full article draft  
+
+---
+
+## Step 6: Save to WordPress
+
+- Create post as **Draft**
+- Not published automatically  
+
+---
+
+## Step 7: Notify CEO
+
+- Send email with draft link  
+- CEO reviews and approves  
+
+---
+
+# Google Sheets Structure
+
+## Sheet Name
+**Story Tracker**
+
+## Columns
+
+- URL  
+- Title  
+- Source  
+- PublishDate  
+- Summary  
+- DateFound  
+- Status  
+
+---
+
+# Setup Requirements
+
+## 1. Google Sheets
+- Create sheet: **Story Tracker**
+- Add columns
+- Connect n8n credentials  
+
+## 2. Gmail
+- Create label: `cannabis-approvals`
+- Setup filter  
+
+## 3. GNews API
+- Add API key in n8n  
+
+## 4. OpenAI
+- Configure API key  
+- Used for:
+  - relevance evaluation  
+  - draft generation  
+
+## 5. WordPress
+- Enable API access  
+- Configure credentials  
+- Allow draft creation  
+
+---
+
+# Workflow Logic Summary
+
+## Daily Flow
